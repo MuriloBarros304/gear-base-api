@@ -2,26 +2,59 @@
 
 namespace App\Models;
 
+use Database\Factories\PartFactory;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
-use Illuminate\Database\Eloquent\Relations\BelongsToMany; // Importação da classe de relacionamento
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 
+/**
+ * Model Part (Peça Automotiva de Reposição)
+ *
+ * Representa os itens em estoque utilizados nos reparos (ex: filtros, velas, pastilhas).
+ */
 class Part extends Model
 {
-    // O $fillable atua como uma lista de permissões para "Mass Assignment". Evita que usuários injetem colunas extras (como 'is_admin') através do JSON da API.
+    /** @use HasFactory<PartFactory> */
+    use HasFactory;
+
+    /**
+     * O $fillable atua como uma lista de permissões para "Mass Assignment".
+     * Evita que usuários injetem colunas extras através do JSON da API.
+     */
     protected $fillable = [
-        'name',             // string
-        'sku',              // string (código único da peça)
-        'stock_quantity',   // integer
-        'cost_price',       // decimal
-        'sale_price'        // decimal
+        'name',             // string: Nome da peça
+        'sku',              // string: Código único da peça para controle de estoque
+        'stock_quantity',   // integer: Quantidade física disponível na oficina
+        'cost_price',       // decimal: Custo de compra da oficina
+        'sale_price',       // decimal: Preço cobrado do cliente final
     ];
 
-    // No PHP moderno, é uma excelente prática tipar o retorno dos métodos. Ajuda ferramentas de autocompletar e linters a entenderem o código.
+    /**
+     * Conversão de tipos de dados ao recuperar do banco de dados.
+     */
+    protected function casts(): array
+    {
+        return [
+            'stock_quantity' => 'integer',
+            'cost_price'     => 'decimal:2',
+            'sale_price'     => 'decimal:2',
+        ];
+    }
+
+    /**
+     * Relacionamento Muitos-para-Muitos (N:N) com Manutenções:
+     * Uma peça pode ser utilizada em várias ordens de manutenção, e uma manutenção
+     * pode utilizar diversas peças diferentes.
+     *
+     * - withPivot('quantity'): Inclui a coluna extra 'quantity' da tabela pivot 'maintenance_part'.
+     * - withTimestamps(): Garante que created_at e updated_at da tabela pivot sejam mantidos pelo Eloquent.
+     *
+     * @return BelongsToMany
+     */
     public function maintenances(): BelongsToMany
     {
-        // belongsToMany indica a relação Muitos-para-Muitos.
-        // withPivot() diz ao Eloquent para também buscar a coluna 'quantity' da nossa futura tabela intermediária (maintenance_part).
-        // withTimestamps() garante que os campos created_at e updated_at da tabela intermediária sejam preenchidos automaticamente.
-        return $this->belongsToMany(Maintenance::class)->withPivot('quantity')->withTimestamps();
+        return $this->belongsToMany(Maintenance::class)
+            ->withPivot('quantity')
+            ->withTimestamps();
     }
 }
