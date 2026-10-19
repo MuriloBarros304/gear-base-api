@@ -2,79 +2,113 @@
 
 namespace App\Http\Controllers;
 
+use App\Http\Requests\StorePartRequest;
+use App\Http\Requests\UpdatePartRequest;
+use App\Http\Resources\PartResource;
 use App\Models\Part;
-use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
+use Illuminate\Http\Resources\Json\AnonymousResourceCollection;
+use Illuminate\Http\Response;
 
+/**
+ * Controller de Gestão de Peças de Reposição (PartController)
+ *
+ * Implementa o padrão de arquitetura REST com separação de responsabilidades:
+ * - Validação de Entrada: Form Requests (StorePartRequest / UpdatePartRequest)
+ * - Persistência e Regras de Negócio: Eloquent ORM (App\Models\Part)
+ * - Transformação e Resposta: API Resources (App\Http\Resources\PartResource)
+ */
 class PartController extends Controller
 {
     /**
-     * Lista todas as peças (Método GET /api/parts)
+     * Lista todas as peças com suporte a paginação de registros.
+     *
+     * Método: GET /api/parts
+     * Status HTTP retornado: 200 OK
+     *
+     * Vantagem da Paginação em APIs REST:
+     * Retorna metadados de paginação padronizados pelo Laravel (data, links, meta),
+     * permitindo que aplicações front-end (React, Vue, mobile) criem tabelas paginadas
+     * sem sobrecarregar a memória do servidor nem o tráfego de rede.
      */
-    public function index()
+    public function index(): AnonymousResourceCollection
     {
-        // O Eloquent busca todos os registros e o Laravel converte automaticamente para JSON
-        return Part::all();
+        // latest() ordena por created_at DESC (as peças mais recentes primeiro)
+        $parts = Part::latest()->paginate(10);
+
+        return PartResource::collection($parts);
     }
 
     /**
-     * Salva uma nova peça (POST /api/parts)
+     * Cadastra uma nova peça no estoque da oficina.
+     *
+     * Método: POST /api/parts
+     * Status HTTP retornado: 201 Created
+     *
+     * Fluxo de Execução:
+     * 1. A requisição HTTP é interceptada pelo StorePartRequest antes de entrar neste método.
+     * 2. Se a validação falhar (ex: SKU duplicado ou preço negativo), a aplicação responde
+     *    imediatamente com status 422 e mensagens de erro, sem executar nenhuma linha abaixo.
+     * 3. $request->validated() retorna um array seguro e sanitizado.
+     * 4. Part::create() realiza a persistência no SQLite respeitando a lista $fillable do Model.
+     * 5. O resultado é transformado pelo PartResource e retornado com status 201.
      */
-    public function store(Request $request)
+    public function store(StorePartRequest $request): JsonResponse
     {
-        // 1. O framework intercepta a requisição aqui.
-        // Se alguma regra falhar, ele nem continua lendo o código. Retorna um erro automático.
-        $validatedData = $request->validate([
-            'name'           => 'required|string|max:255',
-            'sku'            => 'required|string|unique:parts,sku', // Verifica sozinho se o SKU já existe na tabela 'parts'!
-            'stock_quantity' => 'required|integer|min:0',
-            'cost_price'     => 'nullable|numeric|min:0',
-            'sale_price'     => 'required|numeric|min:0',
-        ]);
+        $part = Part::create($request->validated());
 
-        // 2. Se passou, criamos a peça usando APENAS os dados validados e seguros.
-        $part = Part::create($validatedData);
-
-        return response()->json($part, 201); // 201 = Created
+        return (new PartResource($part))
+            ->response()
+            ->setStatusCode(201); // 201 = Recurso criado com sucesso no servidor
     }
 
     /**
-     * Exibe uma peça específica (GET /api/parts/{id})
+     * Exibe os detalhes de uma peça específica pelo seu ID.
+     *
+     * Método: GET /api/parts/{part}
+     * Status HTTP retornado: 200 OK (ou 404 Not Found se o ID não existir)
+     *
+     * Route Model Binding:
+     * O Laravel faz a injeção automática de dependência da Model `Part`.
+     * Se você requisitar /api/parts/999 e a peça 999 não existir,
+     * o framework gera automaticamente uma resposta 404 formatada em JSON.
      */
-    public function show(Part $part)
+    public function show(Part $part): PartResource
     {
-        return response()->json($part);
+        return new PartResource($part);
     }
 
     /**
-     * Atualiza uma peça existente (PUT/PATCH /api/parts/{id})
+     * Atualiza os dados de uma peça existente.
+     *
+     * Método: PUT/PATCH /api/parts/{part}
+     * Status HTTP retornado: 200 OK
+     *
+     * A validação em UpdatePartRequest utiliza a regra 'sometimes', o que significa que
+     * se o cliente enviar apenas `{"sale_price": 89.90}` (método PATCH), somente o preço
+     * será validado e atualizado, mantendo os demais dados da peça inalterados.
      */
-    public function update(Request $request, Part $part)
+    public function update(UpdatePartRequest $request, Part $part): PartResource
     {
-        $validatedData = $request->validate([
-            'name'           => 'sometimes|required|string|max:255',
-            // O código abaixo diz: o SKU deve ser único na tabela parts, EXCETO para o ID desta própria peça
-            'sku'            => 'sometimes|required|string|unique:parts,sku,' . $part->id,
-            'stock_quantity' => 'sometimes|required|integer|min:0',
-            'cost_price'     => 'nullable|numeric|min:0',
-            'sale_price'     => 'sometimes|required|numeric|min:0',
-        ]);
+        $part->update($request->validated());
 
-        // A regra 'sometimes' indica que o campo só será validado se ele for enviado na requisição.
-        // Isso permite atualizações parciais (PATCH), onde o cliente envia apenas o que mudou.
-
-        // Atualiza os dados na memória e salva no banco
-        $part->update($validatedData);
-
-        return response()->json($part);
+        return new PartResource($part);
     }
 
     /**
-     * Remove uma peça do banco de dados (DELETE /api/parts/{id})
+     * Remove uma peça do catálogo do banco de dados.
+     *
+     * Método: DELETE /api/parts/{part}
+     * Status HTTP retornado: 204 No Content
+     *
+     * Boas práticas REST:
+     * Quando um recurso é deletado com sucesso e não há conteúdo a ser devolvido no corpo,
+     * o status HTTP correto é 204 (No Content), com corpo de resposta vazio.
      */
-    public function destroy(Part $part)
+    public function destroy(Part $part): Response
     {
         $part->delete();
 
-        return response()->json(null, 204);
+        return response()->noContent();
     }
 }
